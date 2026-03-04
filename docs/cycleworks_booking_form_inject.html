@@ -1,0 +1,82 @@
+<!-- ============================================================ -->
+<!-- CYCLEWORKS BOOKING FORM – INJECT INTO https://www.cycleworks.in/basic-cycle-servcie -->
+<!-- Add these elements inside your existing <form> and the <script> before </body> -->
+<!-- ============================================================ -->
+
+<!-- 1) Ensure your form has a city dropdown with id="city". If it has a different id, change the script to match. -->
+<!-- Example if you need to add it: -->
+<select id="city" name="city" required>
+  <option value="">Select city</option>
+  <option value="Mumbai">Mumbai</option>
+  <option value="Bangalore">Bangalore</option>
+  <option value="Hyderabad">Hyderabad</option>
+  <!-- Add other cities from your Django City model -->
+</select>
+
+<!-- 2) Add service date picker -->
+<input type="date" id="service_date" name="service_date" required>
+
+<!-- 3) Add time slot dropdown (initially only placeholder) -->
+<select id="slot_id" name="slot_id" required>
+  <option value="">Select Time Slot</option>
+</select>
+
+<!-- 4) Add this <script> at the bottom of the page, before </body> -->
+<script>
+(function () {
+  var API_KEY = "dev-secret-key";
+  var API_BASE = "";  // Leave "" if form is on same origin as API; else e.g. "https://your-django-domain.com"
+  var cityEl = document.getElementById("city");
+  var dateEl = document.getElementById("service_date");
+  var slotEl = document.getElementById("slot_id");
+  if (!cityEl || !dateEl || !slotEl) return;
+
+  function formatTime(s) {
+    if (typeof s !== "string") return s;
+    return s.length >= 5 ? s.substring(0, 5) : s;
+  }
+
+  function loadSlots() {
+    var city = cityEl.value.trim();
+    var date = dateEl.value.trim();
+    if (!city || !date) {
+      slotEl.innerHTML = '<option value="">Select Time Slot</option>';
+      return;
+    }
+    var url = (API_BASE + "/api/slots/available/?city=" + encodeURIComponent(city) + "&date=" + encodeURIComponent(date));
+    fetch(url, {
+      method: "GET",
+      headers: { "X-API-KEY": API_KEY }
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error("Request failed");
+        return res.json();
+      })
+      .then(function (data) {
+        slotEl.innerHTML = '<option value="">Select Time Slot</option>';
+        if (!data || data.length === 0) {
+          var opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = "No slots available for selected date";
+          opt.disabled = true;
+          slotEl.appendChild(opt);
+          return;
+        }
+        data.forEach(function (slot) {
+          var opt = document.createElement("option");
+          opt.value = slot.slot_id;
+          opt.textContent = formatTime(slot.start_time) + " - " + formatTime(slot.end_time) + " (" + slot.remaining_capacity + " slots left)";
+          slotEl.appendChild(opt);
+        });
+      })
+      .catch(function (err) {
+        console.error(err);
+        alert("Unable to load available slots. Please try again.");
+        slotEl.innerHTML = '<option value="">Select Time Slot</option>';
+      });
+  }
+
+  cityEl.addEventListener("change", loadSlots);
+  dateEl.addEventListener("change", loadSlots);
+})();
+</script>
