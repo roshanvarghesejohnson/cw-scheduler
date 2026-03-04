@@ -14,3 +14,12 @@ from django.core.wsgi import get_wsgi_application
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'scheduler_core.settings')
 
 application = get_wsgi_application()
+
+# Run lightweight startup hooks (e.g. ensure default superuser exists).
+try:
+    from apps.common.startup import ensure_default_superuser
+
+    ensure_default_superuser()
+except Exception:
+    # Never block WSGI startup if the startup hook fails.
+    pass
