@@ -16,7 +16,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.bookings.models import Booking
-from apps.cities.models import City
 from apps.customers.models import Customer
 from apps.routing.services.scheduling_service import SchedulingService
 from apps.routing.services.technician_assignment_service import (
@@ -25,7 +24,7 @@ from apps.routing.services.technician_assignment_service import (
 from apps.slots.models import Slot
 
 
-REQUIRED_FIELDS = ("name", "phone", "address", "city", "slot_id", "service_date")
+REQUIRED_FIELDS = ("slot_id", "phone", "address")
 
 
 class BookingCreateView(APIView):
@@ -39,61 +38,96 @@ class BookingCreateView(APIView):
     def post(self, request):
         data = request.data if hasattr(request, "data") else {}
 
+        # Support both the original payload shape and the simplified one:
+        # - original: name, phone, address, city, slot_id, service_date
+        # - simplified (Zoho): customer_name, phone, address, slot_id, bike_type
+
+        # Basic required fields common to both shapes.
         for field in REQUIRED_FIELDS:
             if not data.get(field):
                 return Response(
-                    {"detail": f"Missing required field: {field}"},
+                    {"success": False, "message": f"Missing required field: {field}"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        city_name = data["city"]
-        date_str = data["service_date"]
-        slot_id = data["slot_id"]
+        # Canonical fields
+        slot_id = data.get("slot_id")
+        name = data.get("name") or data.get("customer_name")
+        phone = data.get("phone")
+        address = data.get("address")
+        bike_type = data.get("bike_type")
+        email = data.get("email")
+        cycle_brand = data.get("cycle_brand") or bike_type
+        cycle_model = data.get("cycle_model")
 
-        try:
-            service_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        except (ValueError, TypeError):
+        if not name:
             return Response(
-                {"detail": "Invalid date format. Use YYYY-MM-DD."},
+                {"success": False, "message": "Missing required field: name"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Optional hints; if provided, they must match the slot we resolve below.
+        provided_city_name = data.get("city")
+        provided_date_str = data.get("service_date")
+
+        # Resolve slot and infer city/service_date from it.
         try:
-            city = City.objects.get(name=city_name)
-        except City.DoesNotExist:
+            slot = Slot.objects.select_related("city").get(pk=slot_id)
+        except Slot.DoesNotExist:
             return Response(
-                {"detail": f"City '{city_name}' not found."},
+                {"success": False, "message": "Slot not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        try:
-            slot = Slot.objects.get(pk=slot_id, city=city, date=service_date)
-        except Slot.DoesNotExist:
+        city = slot.city
+        service_date = slot.date
+
+        if provided_date_str:
+            try:
+                parsed_date = datetime.strptime(provided_date_str, "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                return Response(
+                    {"success": False, "message": "Invalid date format. Use YYYY-MM-DD."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if parsed_date != service_date:
+                return Response(
+                    {
+                        "success": False,
+                        "message": "Provided service_date does not match slot date.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if provided_city_name and provided_city_name != city.name:
             return Response(
-                {"detail": "Slot not found or does not match city/date."},
-                status=status.HTTP_404_NOT_FOUND,
+                {
+                    "success": False,
+                    "message": "Provided city does not match slot city.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         remaining = slot.max_capacity - slot.current_utilization
         if remaining <= 0:
             return Response(
-                {"detail": "Selected slot has no remaining capacity."},
+                {"success": False, "message": "Selected slot is fully booked"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         customer = Customer.objects.filter(
-            phone=data["phone"],
+            phone=phone,
             city=city,
         ).first()
         if customer is None:
             customer = Customer.objects.create(
-                name=data["name"],
-                phone=data["phone"],
-                email=data.get("email") or None,
-                address=data["address"],
+                name=name,
+                phone=phone,
+                email=email or None,
+                address=address,
                 city=city,
-                cycle_brand=data.get("cycle_brand") or None,
-                cycle_model=data.get("cycle_model") or None,
+                cycle_brand=cycle_brand or None,
+                cycle_model=cycle_model or None,
             )
 
         with transaction.atomic():
@@ -118,6 +152,8 @@ class BookingCreateView(APIView):
 
         return Response(
             {
+                "success": True,
+                "message": "Booking confirmed",
                 "booking_id": booking.id,
                 "status": booking.status,
                 "slot_id": slot.id,
