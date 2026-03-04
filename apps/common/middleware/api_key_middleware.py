@@ -24,7 +24,16 @@ class ApiKeyMiddleware:
         # Allow OPTIONS requests to pass through
         if request.method == "OPTIONS":
             return self.get_response(request)
-        if request.path.startswith("/api/"):
+
+        path = request.path or ""
+
+        # Public, unauthenticated API endpoints.
+        if path.startswith("/api/slots/available/") or path.startswith(
+            "/api/bookings/create/"
+        ):
+            return self.get_response(request)
+
+        if path.startswith("/api/"):
             api_key = request.headers.get("X-API-KEY") or request.META.get(
                 "HTTP_X_API_KEY"
             )
@@ -34,4 +43,5 @@ class ApiKeyMiddleware:
                     {"detail": "Invalid or missing API key"},
                     status=403,
                 )
+
         return self.get_response(request)
