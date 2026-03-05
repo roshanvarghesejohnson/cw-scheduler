@@ -143,6 +143,10 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 CORS_ALLOW_ALL_ORIGINS = True
 
+CORS_ALLOWED_ORIGINS = [
+    "https://bookingautomationchecker.zohosites.in",
+]
+
 # API key for public booking endpoints (change in production).
 SCHEDULER_API_KEY = "dev-secret-key"
 CORS_ALLOW_HEADERS = [
