@@ -5,8 +5,13 @@ Enforces a static X-API-KEY header for requests to /api/ until full
 OAuth/Zoho authentication is implemented.
 """
 
+import logging
+
 from django.conf import settings
 from django.http import JsonResponse
+
+
+logger = logging.getLogger(__name__)
 
 
 class ApiKeyMiddleware:
@@ -38,7 +43,15 @@ class ApiKeyMiddleware:
                 "HTTP_X_API_KEY"
             )
             expected = getattr(settings, "SCHEDULER_API_KEY", None)
+            logger.debug(
+                "API key check | path=%s api_key_present=%s",
+                path,
+                bool(api_key),
+            )
             if not expected or not api_key or api_key != expected:
+                logger.warning(
+                    "API key rejected | path=%s header=%r", path, api_key
+                )
                 return JsonResponse(
                     {"detail": "Invalid or missing API key"},
                     status=403,
