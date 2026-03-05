@@ -136,6 +136,11 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+# Use WhiteNoise's compressed manifest storage so that admin CSS/JS and other
+# static assets are collected into STATIC_ROOT with hashed filenames and
+# served efficiently in production.
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
 CORS_ALLOW_ALL_ORIGINS = True
 
 # API key for public booking endpoints (change in production).
