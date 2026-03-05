@@ -9,8 +9,13 @@ not ready (e.g. before migrations).
 
 from __future__ import annotations
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import DatabaseError, OperationalError
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_default_superuser() -> None:
@@ -25,6 +30,12 @@ def ensure_default_superuser() -> None:
     Wrapped in broad exception handling so startup is not blocked by database
     issues (for example, when migrations have not yet been applied).
     """
+    try:
+        engine = settings.DATABASES["default"]["ENGINE"]
+        logger.info("Database engine in use: %s", engine)
+    except Exception:
+        pass
+
     try:
         User = get_user_model()
         if User.objects.filter(is_superuser=True).exists():
