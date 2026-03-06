@@ -2,8 +2,9 @@
 Booking creation API for the CycleWorks Scheduling System.
 
 Main entry point for customer bookings from external forms (e.g. Zoho Sites).
-Creates the booking with the selected slot and triggers the scheduling engine
-(slot assignment for any unassigned bookings, then technician assignment).
+Creates the booking with the selected slot, geocodes the address, and updates
+slot utilization. Technician assignment is performed by the dispatch optimizer
+(run_dispatch / run_next_day_dispatch), not during booking creation.
 """
 
 from __future__ import annotations
@@ -17,10 +18,7 @@ from rest_framework.views import APIView
 
 from apps.bookings.models import Booking
 from apps.customers.models import Customer
-from apps.routing.services.scheduling_service import SchedulingService
-from apps.routing.services.technician_assignment_service import (
-    TechnicianAssignmentService,
-)
+from apps.routing.services.geocoding_service import GeocodingService
 from apps.slots.models import Slot
 
 
@@ -29,10 +27,11 @@ REQUIRED_FIELDS = ("slot_id", "phone", "address")
 
 class BookingCreateView(APIView):
     """
-    POST: Create a booking with selected slot and run the scheduling pipeline.
+    POST: Create a booking with selected slot.
 
     Accepts JSON with customer details and slot_id; reuses or creates Customer,
-    creates Booking, then runs slot + technician assignment for that city/date.
+    creates Booking, increments slot utilization, and geocodes the address.
+    Technician assignment is performed by the dispatch optimizer, not here.
     """
 
     def post(self, request):
@@ -142,13 +141,11 @@ class BookingCreateView(APIView):
             slot.current_utilization += 1
             slot.save(update_fields=["current_utilization"])
 
-            SchedulingService().auto_assign_slots(
-                city=city, service_date=service_date
-            )
-            TechnicianAssignmentService().auto_assign_technicians(
-                city=city, service_date=service_date
-            )
-            booking.refresh_from_db()
+        # Geocode address (outside transaction to avoid holding lock during HTTP)
+        coords = GeocodingService().geocode_address(address, city.name) if address else None
+        if coords:
+            booking.latitude, booking.longitude = coords
+            booking.save(update_fields=["latitude", "longitude"])
 
         return Response(
             {

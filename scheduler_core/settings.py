@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'apps.technicians',
     'apps.customers',
     'apps.slots',
+    'apps.scheduling',
     'apps.bookings',
     'apps.routing',
 ]

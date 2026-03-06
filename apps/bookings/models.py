@@ -80,6 +80,21 @@ class Booking(models.Model):
         blank=True,
         help_text="Operations notes, customer constraints, or exception details.",
     )
+    latitude = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Service location latitude for routing; geocoded from address.",
+    )
+    longitude = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Service location longitude for routing; geocoded from address.",
+    )
+    route_position = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Stop order in technician's route (1-based); set by dispatch optimizer.",
+    )
     created_at = models.DateTimeField(
         auto_now_add=True,
         help_text="Timestamp when the booking was first created.",

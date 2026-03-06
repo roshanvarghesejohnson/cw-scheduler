@@ -3,11 +3,10 @@ Primary daily scheduling entrypoint for the CycleWorks Scheduling Engine.
 
 This orchestration command runs the full scheduling pipeline:
 
-1. auto_assign_slots   – Assigns REQUESTED bookings to available slots
-2. auto_assign_technicians – Assigns technicians to slot-assigned bookings
+1. auto_assign_slots – Assigns REQUESTED bookings to available slots
+2. dispatch optimizer – Assigns technicians via route optimization
 
-Ops run this daily instead of invoking the individual commands manually. Future
-geo-routing logic will be plugged into the technician assignment stage.
+Ops run this daily instead of invoking the individual commands manually.
 """
 
 from __future__ import annotations
@@ -17,19 +16,16 @@ from datetime import datetime
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.cities.models import City
+from apps.routing.services.dispatch_optimizer_service import DispatchOptimizerService
 from apps.routing.services.scheduling_service import SchedulingService
-from apps.routing.services.technician_assignment_service import (
-    TechnicianAssignmentService,
-)
 
 
 class Command(BaseCommand):
     """
     Run the full scheduling pipeline for a city and date.
 
-    Orchestrates slot assignment followed by technician assignment. This is the
-    primary daily entrypoint for ops; future geo-routing will replace the
-    technician selection logic within the pipeline.
+    Orchestrates slot assignment followed by dispatch optimization (technician
+    assignment via route optimization).
     """
 
     help = "Run full scheduling pipeline (slots + technicians) for a city and date."
@@ -61,14 +57,12 @@ class Command(BaseCommand):
             raise CommandError(f"City '{city_name}' does not exist.") from exc
 
         slot_service = SchedulingService()
-        tech_service = TechnicianAssignmentService()
+        optimizer = DispatchOptimizerService()
 
         slots_assigned = slot_service.auto_assign_slots(
             city=city, service_date=service_date
         )
-        techs_assigned = tech_service.auto_assign_technicians(
-            city=city, service_date=service_date
-        )
+        techs_assigned = optimizer.optimize(city=city, service_date=service_date)
 
         self.stdout.write(
             self.style.SUCCESS(

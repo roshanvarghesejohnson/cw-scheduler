@@ -2,10 +2,8 @@ from django.contrib import admin
 from django.contrib import messages
 
 from apps.cities.models import City
+from apps.routing.services.dispatch_optimizer_service import DispatchOptimizerService
 from apps.routing.services.scheduling_service import SchedulingService
-from apps.routing.services.technician_assignment_service import (
-    TechnicianAssignmentService,
-)
 
 from .models import Booking
 
@@ -55,16 +53,14 @@ class BookingAdmin(admin.ModelAdmin):
         )
 
         slot_service = SchedulingService()
-        tech_service = TechnicianAssignmentService()
+        optimizer = DispatchOptimizerService()
 
         for city_id, service_date in pairs:
             city = City.objects.get(pk=city_id)
             slots_assigned = slot_service.auto_assign_slots(
                 city=city, service_date=service_date
             )
-            techs_assigned = tech_service.auto_assign_technicians(
-                city=city, service_date=service_date
-            )
+            techs_assigned = optimizer.optimize(city=city, service_date=service_date)
             messages.success(
                 request,
                 f"{city.name} {service_date}: {slots_assigned} slots assigned, "
