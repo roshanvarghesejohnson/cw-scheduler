@@ -33,57 +33,21 @@ def _booking_coords(booking: Booking) -> Optional[Tuple[float, float]]:
     return None
 
 
-def _nearest_neighbor_route(
-    distance_service: DistanceService,
-    origin_lat: Optional[float],
-    origin_lon: Optional[float],
-    bookings: List[Booking],
-) -> List[Booking]:
-    """
-    Order bookings by nearest-neighbor from origin.
-    Returns ordered list; skips bookings with no coordinates.
-    """
-    if not bookings:
-        return []
-    if origin_lat is None or origin_lon is None:
-        return list(bookings)  # No reordering possible
-
-    remaining = list(bookings)
-    ordered: List[Booking] = []
-    curr_lat, curr_lon = origin_lat, origin_lon
-
-    while remaining:
-        best_dist = float("inf")
-        best_idx = -1
-        for i, b in enumerate(remaining):
-            coords = _booking_coords(b)
-            if coords is None:
-                continue
-            d = distance_service.distance_km(curr_lat, curr_lon, coords[0], coords[1])
-            if d < best_dist:
-                best_dist = d
-                best_idx = i
-        if best_idx < 0:
-            break
-        chosen = remaining.pop(best_idx)
-        ordered.append(chosen)
-        coords = _booking_coords(chosen)
-        if coords:
-            curr_lat, curr_lon = coords
-
-    return ordered
-
-
 class DispatchOptimizerService:
     """
-    Optimizes technician assignment and route ordering.
+    Optimizes technician assignment and route ordering using route-aware greedy
+    optimization.
 
     Algorithm:
     1. Fetch unassigned bookings (has slot, no technician) and available technicians.
-    2. Build distance matrix; use greedy assignment respecting daily_capacity and
-       per-slot exclusivity.
-    3. For each technician, order their bookings by nearest-neighbor from base.
-    4. Commit assignments (technician, status, route_position).
+    2. Maintain in-memory route state per technician:
+       {tech_id: {current_lat, current_lon, bookings: [...]}}.
+    3. For each booking (in slot/time order), choose the technician whose current
+       route end is closest to the booking, respecting daily_capacity and per-slot
+       exclusivity.
+    4. Append the booking to that technician's route and update current_lat/lon.
+    5. Commit assignments (technician, status, route_position) based on the
+       in-memory routes.
     """
 
     @transaction.atomic
@@ -132,10 +96,18 @@ class DispatchOptimizerService:
         ).values_list("technician_id", "slot_id")
         tech_slot_usage: Set[Tuple[int, int]] = set(existing_pairs)
 
-        tech_by_pk = {t.pk: t for t in technicians}
+        # In-memory route state per technician.
+        routes: Dict[int, Dict[str, object]] = {}
+        for tech in technicians:
+            routes[tech.pk] = {
+                "current_lat": tech.base_latitude,
+                "current_lon": tech.base_longitude,
+                "bookings": [],  # type: List[Booking]
+            }
 
-        assignments: Dict[int, List[Booking]] = defaultdict(list)
-
+        # Route-aware greedy assignment: process bookings in slot/time order,
+        # always extending the nearest technician route that can still take
+        # the booking.
         for booking in bookings:
             coords = _booking_coords(booking)
             if coords is None:
@@ -149,14 +121,22 @@ class DispatchOptimizerService:
             best_dist = float("inf")
 
             for tech in technicians:
-                if tech_daily_counts[tech.pk] >= tech.daily_capacity:
+                tech_id = tech.pk
+                if tech_daily_counts[tech_id] >= tech.daily_capacity:
                     continue
-                if (tech.pk, booking.slot_id) in tech_slot_usage:
+                if (tech_id, booking.slot_id) in tech_slot_usage:
+                    continue
+
+                state = routes[tech_id]
+                curr_lat = state["current_lat"]
+                curr_lon = state["current_lon"]
+                if curr_lat is None or curr_lon is None:
+                    # No meaningful origin; skip tech until base coords are set.
                     continue
 
                 d = distance_service.distance_km(
-                    tech.base_latitude,
-                    tech.base_longitude,
+                    curr_lat,
+                    curr_lon,
                     coords[0],
                     coords[1],
                 )
@@ -167,21 +147,25 @@ class DispatchOptimizerService:
             if best_tech is None:
                 continue
 
-            assignments[best_tech.pk].append(booking)
-            tech_daily_counts[best_tech.pk] += 1
-            tech_slot_usage.add((best_tech.pk, booking.slot_id))
+            tech_id = best_tech.pk
+            state = routes[tech_id]
+            # Append booking to this technician's in-memory route.
+            state_bookings: List[Booking] = state["bookings"]  # type: ignore[assignment]
+            state_bookings.append(booking)
+            state["current_lat"], state["current_lon"] = coords
+
+            tech_daily_counts[tech_id] += 1
+            tech_slot_usage.add((tech_id, booking.slot_id))
 
         to_update: List[Booking] = []
 
-        for tech_pk, tech_bookings in assignments.items():
-            tech = tech_by_pk[tech_pk]
-            ordered = _nearest_neighbor_route(
-                distance_service,
-                tech.base_latitude,
-                tech.base_longitude,
-                tech_bookings,
-            )
-            for pos, b in enumerate(ordered, start=1):
+        # Route order is the order in which bookings were appended to each
+        # technician's in-memory route.
+        for tech_pk, state in routes.items():
+            tech_bookings: List[Booking] = state["bookings"]  # type: ignore[assignment]
+            if not tech_bookings:
+                continue
+            for pos, b in enumerate(tech_bookings, start=1):
                 b.technician_id = tech_pk
                 b.status = Booking.Status.CONFIRMED
                 b.route_position = pos
