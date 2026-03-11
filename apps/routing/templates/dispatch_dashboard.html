@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dispatch Operations Dashboard</title>
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin=""
+    />
+    <style>
+        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 1rem; }
+        .controls { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
+        .controls label { font-weight: 600; margin-right: 0.25rem; }
+        .controls input, .controls select, .controls button { padding: 0.25rem 0.5rem; }
+        .metrics { margin: 1rem 0; padding: 0.75rem; background: #f5f5f5; border-radius: 4px; }
+        .tech-card { border: 1px solid #ddd; border-radius: 4px; padding: 0.75rem; margin-bottom: 0.75rem; }
+        .tech-header { font-weight: 700; margin-bottom: 0.25rem; }
+        .jobs-list { margin-left: 1rem; }
+        #map { height: 420px; margin-top: 1rem; border: 1px solid #ccc; border-radius: 4px; }
+        .badge { display: inline-block; border-radius: 999px; padding: 0.1rem 0.5rem; font-size: 0.8rem; background: #eee; margin-left: 0.25rem; }
+    </style>
+</head>
+<body>
+    <h1>Dispatch Operations Dashboard</h1>
+
+    <div class="controls">
+        <div>
+            <label for="city">City</label>
+            <input id="city" type="text" placeholder="Mumbai" />
+        </div>
+        <div>
+            <label for="date">Date</label>
+            <input id="date" type="date" />
+        </div>
+        <button id="load-btn" type="button">Load Dispatch Plan</button>
+        <span id="status" style="margin-left:0.5rem; font-size:0.9rem;"></span>
+    </div>
+
+    <div id="summary" class="metrics" style="display:none;"></div>
+
+    <div id="technicians"></div>
+
+    <div id="map"></div>
+
+    <script
+        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""
+    ></script>
+    <script>
+        const statusEl = document.getElementById("status");
+        const summaryEl = document.getElementById("summary");
+        const techContainer = document.getElementById("technicians");
+        const cityInput = document.getElementById("city");
+        const dateInput = document.getElementById("date");
+
+        // Default date = today
+        const today = new Date().toISOString().slice(0, 10);
+        dateInput.value = today;
+
+        let map = L.map("map").setView([19.07, 72.88], 11);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 18,
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        let mapLayers = [];
+
+        function clearMap() {
+            mapLayers.forEach(layer => map.removeLayer(layer));
+            mapLayers = [];
+        }
+
+        function colorForIndex(idx) {
+            const colors = ["#d7263d", "#1b9aaa", "#2e7d32", "#f9a825", "#6a1b9a", "#00838f"];
+            return colors[idx % colors.length];
+        }
+
+        async function loadPlan() {
+            const city = cityInput.value.trim();
+            const date = dateInput.value;
+            if (!city || !date) {
+                statusEl.textContent = "City and date are required.";
+                return;
+            }
+            statusEl.textContent = "Loading...";
+            summaryEl.style.display = "none";
+            techContainer.innerHTML = "";
+            clearMap();
+
+            try {
+                const resp = await fetch(`/api/dispatch/plan/?city=${encodeURIComponent(city)}&date=${encodeURIComponent(date)}`);
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    statusEl.textContent = err.detail || `Error ${resp.status}`;
+                    return;
+                }
+                const data = await resp.json();
+                statusEl.textContent = "";
+                renderSummary(data);
+                renderTechnicians(data);
+                renderMap(data);
+            } catch (e) {
+                console.error(e);
+                statusEl.textContent = "Failed to load dispatch plan.";
+            }
+        }
+
+        function renderSummary(data) {
+            const cs = data.city_summary || {};
+            summaryEl.style.display = "block";
+            summaryEl.innerHTML = `
+                <strong>${data.city}</strong> – ${data.date}<br/>
+                Total bookings: ${cs.total_bookings ?? 0},
+                Assigned: ${cs.assigned_bookings ?? 0},
+                Unassigned: ${cs.unassigned_bookings ?? 0},
+                Technicians used: ${cs.technicians_used ?? 0},
+                Avg jobs/tech: ${(cs.average_jobs_per_technician ?? 0).toFixed(2)}
+            `;
+        }
+
+        function renderTechnicians(data) {
+            const techs = data.technicians || [];
+            if (!techs.length) {
+                techContainer.innerHTML = "<p>No technicians with assigned routes for this date.</p>";
+                return;
+            }
+            techs.forEach((t, idx) => {
+                const color = colorForIndex(idx);
+                const card = document.createElement("div");
+                card.className = "tech-card";
+                card.innerHTML = `
+                    <div class="tech-header">
+                        Technician: ${t.technician_name}
+                        <span class="badge" style="border:1px solid ${color}; color:${color};">
+                            ${t.total_jobs} jobs, util ${(t.technician_utilization * 100).toFixed(0)}%, ${t.estimated_route_distance_km} km
+                        </span>
+                    </div>
+                `;
+                const list = document.createElement("ol");
+                list.className = "jobs-list";
+                (t.jobs || []).forEach(job => {
+                    const li = document.createElement("li");
+                    const windowStr = job.slot_start && job.slot_end ? `${job.slot_start}–${job.slot_end}` : "N/A";
+                    li.textContent = `${job.customer_name || "Unknown"} – ${job.address || ""} (${windowStr})`;
+                    list.appendChild(li);
+                });
+                card.appendChild(list);
+                techContainer.appendChild(card);
+            });
+        }
+
+        function renderMap(data) {
+            const techs = data.technicians || [];
+            const bounds = L.latLngBounds([]);
+            techs.forEach((t, idx) => {
+                const color = colorForIndex(idx);
+                const points = [];
+
+                // Base marker (if available) is the starting point.
+                if (t.base_latitude != null && t.base_longitude != null) {
+                    const baseLatLng = [t.base_latitude, t.base_longitude];
+                    points.push(baseLatLng);
+                    const baseMarker = L.marker(baseLatLng, {
+                        title: `${t.technician_name} Base`
+                    }).bindPopup(
+                        `<strong>${t.technician_name}</strong><br/>Base`
+                    );
+                    baseMarker.addTo(map);
+                    mapLayers.push(baseMarker);
+                    bounds.extend(baseLatLng);
+                }
+
+                (t.jobs || []).forEach((job, jIdx) => {
+                    if (job.latitude == null || job.longitude == null) return;
+                    const latlng = [job.latitude, job.longitude];
+                    points.push(latlng);
+                    const marker = L.marker(latlng, {
+                        title: `${t.technician_name} #${job.route_position}`
+                    }).bindPopup(
+                        `<strong>${t.technician_name}</strong><br/>#${job.route_position} – ${job.customer_name || ""}<br/>${job.address || ""}`
+                    );
+                    marker.addTo(map);
+                    mapLayers.push(marker);
+                    bounds.extend(latlng);
+                });
+                if (points.length > 1) {
+                    const line = L.polyline(points, { color, weight: 3, opacity: 0.8 });
+                    line.addTo(map);
+                    mapLayers.push(line);
+                }
+            });
+            if (bounds.isValid()) {
+                map.fitBounds(bounds.pad(0.2));
+            }
+        }
+
+        document.getElementById("load-btn").addEventListener("click", loadPlan);
+    </script>
+</body>
+</html>
+

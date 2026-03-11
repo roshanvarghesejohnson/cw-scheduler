@@ -29,4 +29,6 @@ urlpatterns = [
     ),
     path("api/bookings/create/", BookingCreateView.as_view(), name="booking-create"),
     path("api/cities/", include("apps.cities.urls")),
+    path("api/dispatch/", include("apps.routing.urls")),
 ]
+
