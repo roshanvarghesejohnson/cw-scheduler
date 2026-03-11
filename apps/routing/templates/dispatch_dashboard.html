@@ -80,18 +80,31 @@
 
         async function loadPlan() {
             const city = cityInput.value.trim();
-            const date = dateInput.value;
-            if (!city || !date) {
+            const rawDate = dateInput.value;
+            if (!city || !rawDate) {
                 statusEl.textContent = "City and date are required.";
                 return;
             }
+
+            // Normalize date to YYYY-MM-DD for the API.
+            let formattedDate = rawDate;
+            try {
+                const d = new Date(rawDate);
+                if (!isNaN(d.getTime())) {
+                    formattedDate = d.toISOString().split("T")[0];
+                }
+            } catch (e) {
+                // Fallback: send rawDate as-is.
+                formattedDate = rawDate;
+            }
+
             statusEl.textContent = "Loading...";
             summaryEl.style.display = "none";
             techContainer.innerHTML = "";
             clearMap();
 
             try {
-                const resp = await fetch(`/api/dispatch/plan/?city=${encodeURIComponent(city)}&date=${encodeURIComponent(date)}`);
+                const resp = await fetch(`/api/dispatch/plan/?city=${encodeURIComponent(city)}&date=${encodeURIComponent(formattedDate)}`);
                 if (!resp.ok) {
                     const err = await resp.json().catch(() => ({}));
                     statusEl.textContent = err.detail || `Error ${resp.status}`;
