@@ -38,6 +38,11 @@ class ApiKeyMiddleware:
         ):
             return self.get_response(request)
 
+        # Internal dispatch APIs are read-only and used by internal dashboards;
+        # they do not require an API key.
+        if path.startswith("/api/dispatch/"):
+            return self.get_response(request)
+
         if path.startswith("/api/"):
             api_key = request.headers.get("X-API-KEY") or request.META.get(
                 "HTTP_X_API_KEY"
