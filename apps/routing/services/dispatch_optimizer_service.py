@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from django.db import transaction
 
 from apps.bookings.models import Booking
+from apps.integrations.services.zoho_crm_service import ZohoCRMService
 from apps.routing.services.distance_service import DistanceService
 from apps.technicians.models import Technician
 
@@ -175,5 +176,28 @@ class DispatchOptimizerService:
             Booking.objects.bulk_update(
                 to_update, ["technician", "status", "route_position"]
             )
+
+            # After DB state is committed, trigger Zoho CRM sync.
+            crm_service = ZohoCRMService()
+            for b in to_update:
+                if getattr(b, "crm_deal_id", None) and b.technician_id:
+                    tech = next(
+                        (t for t in technicians if t.pk == b.technician_id), None
+                    )
+                    if not tech:
+                        continue
+                    try:
+                        crm_service.update_deal_assignment(
+                            b.crm_deal_id,
+                            tech.name,
+                            b.service_date,
+                            b.slot.start_time if b.slot else None,
+                            b.slot.end_time if b.slot else None,
+                            b,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Zoho CRM sync failed for booking %s", b.pk
+                        )
 
         return len(to_update)

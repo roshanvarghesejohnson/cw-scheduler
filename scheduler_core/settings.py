@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'apps.scheduling',
     'apps.bookings',
     'apps.routing',
+    'apps.integrations',
 ]
 
 MIDDLEWARE = [
@@ -179,3 +180,10 @@ CORS_ALLOW_METHODS = [
     "POST",
     "PUT",
 ]
+
+# Zoho CRM integration
+ZOHO_CRM_ACCESS_TOKEN = os.environ.get("ZOHO_CRM_ACCESS_TOKEN")
+ZOHO_CRM_BASE_URL = os.environ.get(
+    "ZOHO_CRM_BASE_URL",
+    "https://www.zohoapis.in/crm/v2",
+)

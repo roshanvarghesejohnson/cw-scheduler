@@ -80,6 +80,13 @@ class Booking(models.Model):
         blank=True,
         help_text="Operations notes, customer constraints, or exception details.",
     )
+    crm_deal_id = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Zoho CRM Deal ID corresponding to this booking",
+    )
     latitude = models.FloatField(
         null=True,
         blank=True,
