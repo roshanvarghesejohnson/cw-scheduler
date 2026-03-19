@@ -25,6 +25,67 @@ class ZohoCRMService:
             settings, "ZOHO_CRM_ACCESS_TOKEN", None
         )
 
+    def create_deal(self, booking: Booking) -> Optional[str]:
+        """
+        Create a Zoho CRM Deal for the given booking and return its ID.
+
+        Booking creation in the core system must remain resilient: this method
+        logs and returns None on any failure rather than raising.
+        """
+        if not self.access_token:
+            logger.warning("Zoho access token missing")
+            return None
+
+        url = f"{self.base_url}/Deals"
+
+        headers = {
+            "Authorization": f"Zoho-oauthtoken {self.access_token}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "data": [
+                {
+                    "Deal_Name": f"{booking.customer.name} - {booking.service_date}",
+                    "Phone": booking.customer.phone,
+                    "City": booking.city.name if getattr(booking, "city", None) else None,
+                    "Address": getattr(booking, "address", None),
+                    "Pin_Code": getattr(booking, "pincode", None),
+                    "Cycle_Brand": getattr(booking, "cycle_brand", None),
+                    "Cycle_Model": getattr(booking, "cycle_model", None),
+                    "Closing_Date": booking.service_date.strftime("%Y-%m-%d"),
+                }
+            ]
+        }
+
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=10)
+
+            if 200 <= resp.status_code < 300:
+                try:
+                    data = resp.json()
+                    deal_id = data["data"][0]["details"]["id"]
+                except Exception:
+                    logger.warning(
+                        "Zoho deal creation response parse failed",
+                        extra={"status": resp.status_code, "body": resp.text[:500]},
+                    )
+                    return None
+                logger.info("Zoho deal created", extra={"deal_id": deal_id})
+                return deal_id
+            else:
+                logger.warning(
+                    "Zoho deal creation failed",
+                    extra={
+                        "status": resp.status_code,
+                        "body": resp.text[:500],
+                    },
+                )
+        except Exception:
+            logger.exception("Zoho deal creation error")
+
+        return None
+
     def update_deal_assignment(
         self,
         crm_deal_id: Optional[str],
