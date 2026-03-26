@@ -184,8 +184,17 @@ CORS_ALLOW_METHODS = [
 ]
 
 # Zoho CRM integration
-ZOHO_CRM_ACCESS_TOKEN = os.environ.get("ZOHO_CRM_ACCESS_TOKEN")
 ZOHO_CRM_BASE_URL = os.environ.get(
     "ZOHO_CRM_BASE_URL",
     "https://www.zohoapis.in/crm/v2",
 )
+# OAuth (India DC): refresh access token — preferred over a long-lived static token
+ZOHO_OAUTH_TOKEN_URL = os.environ.get(
+    "ZOHO_OAUTH_TOKEN_URL",
+    "https://accounts.zoho.in/oauth/v2/token",
+)
+ZOHO_CRM_REFRESH_TOKEN = os.environ.get("ZOHO_CRM_REFRESH_TOKEN")
+ZOHO_CLIENT_ID = os.environ.get("ZOHO_CLIENT_ID")
+ZOHO_CLIENT_SECRET = os.environ.get("ZOHO_CLIENT_SECRET")
+# Optional fallback only; create_deal and CRM calls use refresh token flow in code
+ZOHO_CRM_ACCESS_TOKEN = os.environ.get("ZOHO_CRM_ACCESS_TOKEN")

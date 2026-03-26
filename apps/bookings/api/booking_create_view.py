@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import logging
-
 from django.db import transaction
 from rest_framework import status
 from rest_framework.response import Response
@@ -26,9 +24,6 @@ from apps.slots.models import Slot
 
 
 REQUIRED_FIELDS = ("slot_id", "phone", "address")
-
-
-logger = logging.getLogger(__name__)
 
 
 class BookingCreateView(APIView):
@@ -153,16 +148,11 @@ class BookingCreateView(APIView):
             booking.latitude, booking.longitude = coords
             booking.save(update_fields=["latitude", "longitude"])
 
-        # Create Zoho CRM Deal for this booking. This is best-effort: any errors
-        # are logged and do not affect the booking confirmation response.
-        try:
-            crm_service = ZohoCRMService()
-            deal_id = crm_service.create_deal(booking)
-            if deal_id:
-                booking.crm_deal_id = deal_id
-                booking.save(update_fields=["crm_deal_id"])
-        except Exception:
-            logger.exception("Zoho deal creation failed")
+        # Zoho CRM Deal creation: refreshes OAuth token, minimal payload, raises on failure.
+        crm_service = ZohoCRMService()
+        deal_id = crm_service.create_deal(booking)
+        booking.crm_deal_id = deal_id
+        booking.save(update_fields=["crm_deal_id"])
 
         return Response(
             {

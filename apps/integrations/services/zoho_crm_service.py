@@ -11,10 +11,12 @@ from apps.bookings.models import Booking
 
 logger = logging.getLogger(__name__)
 
+ZOHO_CREATE_DEAL_MINIMAL_STAGE = "Qualification"
+
 
 class ZohoCRMService:
     """
-    Lightweight Zoho CRM client for updating Deal assignments.
+    Zoho CRM client: OAuth refresh for access token, Deal create, Deal update.
     """
 
     def __init__(self) -> None:
@@ -25,66 +27,113 @@ class ZohoCRMService:
             settings, "ZOHO_CRM_ACCESS_TOKEN", None
         )
 
-    def create_deal(self, booking: Booking) -> Optional[str]:
+    def get_access_token(self) -> str:
         """
-        Create a Zoho CRM Deal for the given booking and return its ID.
+        Exchange refresh_token for a fresh access_token (Zoho India accounts).
+        """
+        token_url = getattr(
+            settings,
+            "ZOHO_OAUTH_TOKEN_URL",
+            "https://accounts.zoho.in/oauth/v2/token",
+        )
+        refresh_token = getattr(settings, "ZOHO_CRM_REFRESH_TOKEN", None)
+        client_id = getattr(settings, "ZOHO_CLIENT_ID", None)
+        client_secret = getattr(settings, "ZOHO_CLIENT_SECRET", None)
 
-        Booking creation in the core system must remain resilient: this method
-        logs and returns None on any failure rather than raising.
+        if not refresh_token or not client_id or not client_secret:
+            raise RuntimeError(
+                "Zoho OAuth requires ZOHO_CRM_REFRESH_TOKEN, ZOHO_CLIENT_ID, and "
+                "ZOHO_CLIENT_SECRET to be set."
+            )
+
+        logger.info("Zoho OAuth: requesting access token from %s", token_url)
+        resp = requests.post(
+            token_url,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=30,
+        )
+        body = resp.text
+        logger.info(
+            "Zoho OAuth response: status=%s body=%s",
+            resp.status_code,
+            body,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"Zoho OAuth token refresh failed: status={resp.status_code} body={body}"
+            )
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Zoho OAuth token refresh: invalid JSON body={body}"
+            ) from exc
+        access = data.get("access_token")
+        if not access:
+            raise RuntimeError(
+                f"Zoho OAuth response missing access_token: body={body}"
+            )
+        return access
+
+    def create_deal(self, booking: Booking) -> str:
         """
-        if not self.access_token:
-            logger.warning("Zoho access token missing")
-            return None
+        Create a Zoho CRM Deal (minimal payload). Refreshes access token first.
+
+        Raises on any failure so callers and logs surface errors.
+        """
+        logger.info("=== ZOHO CREATE DEAL START ===")
+        self.access_token = self.get_access_token()
+        logger.info("Zoho access token in use: %s", self.access_token)
 
         url = f"{self.base_url}/Deals"
-
         headers = {
             "Authorization": f"Zoho-oauthtoken {self.access_token}",
             "Content-Type": "application/json",
         }
-
+        # Minimal payload only: Deal_Name + Stage (identify deal via customer + date)
         payload = {
             "data": [
                 {
                     "Deal_Name": f"{booking.customer.name} - {booking.service_date}",
-                    "Phone": booking.customer.phone,
-                    "City": booking.city.name if getattr(booking, "city", None) else None,
-                    "Address": getattr(booking, "address", None),
-                    "Pin_Code": getattr(booking, "pincode", None),
-                    "Cycle_Brand": getattr(booking, "cycle_brand", None),
-                    "Cycle_Model": getattr(booking, "cycle_model", None),
-                    "Closing_Date": booking.service_date.strftime("%Y-%m-%d"),
+                    "Stage": ZOHO_CREATE_DEAL_MINIMAL_STAGE,
                 }
             ]
         }
+        logger.info("Zoho create deal request URL: %s", url)
+        logger.info("Zoho create deal request payload: %s", payload)
+
+        resp = requests.post(url, json=payload, headers=headers, timeout=30)
+        body = resp.text
+        logger.info("Zoho create deal response status: %s", resp.status_code)
+        logger.info("Zoho create deal response body: %s", body)
+
+        # Zoho may return 200 or 201 on successful insert
+        if not (200 <= resp.status_code < 300):
+            raise RuntimeError(
+                f"Zoho create deal failed: status={resp.status_code} body={body}"
+            )
 
         try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=10)
+            data = resp.json()
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Zoho create deal: invalid JSON body={body}"
+            ) from exc
+        try:
+            deal_id = data["data"][0]["details"]["id"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(
+                f"Zoho create deal: could not parse deal id from response: {body}"
+            ) from exc
 
-            if 200 <= resp.status_code < 300:
-                try:
-                    data = resp.json()
-                    deal_id = data["data"][0]["details"]["id"]
-                except Exception:
-                    logger.warning(
-                        "Zoho deal creation response parse failed",
-                        extra={"status": resp.status_code, "body": resp.text[:500]},
-                    )
-                    return None
-                logger.info("Zoho deal created", extra={"deal_id": deal_id})
-                return deal_id
-            else:
-                logger.warning(
-                    "Zoho deal creation failed",
-                    extra={
-                        "status": resp.status_code,
-                        "body": resp.text[:500],
-                    },
-                )
-        except Exception:
-            logger.exception("Zoho deal creation error")
-
-        return None
+        logger.info("Deal Created Successfully: %s", deal_id)
+        return str(deal_id)
 
     def update_deal_assignment(
         self,
@@ -102,8 +151,10 @@ class ZohoCRMService:
         """
         if not crm_deal_id:
             return
-        if not self.access_token:
-            logger.warning("Zoho CRM access token not configured; skipping update")
+        try:
+            self.access_token = self.get_access_token()
+        except Exception:
+            logger.exception("Zoho CRM: token refresh failed; skipping deal update")
             return
 
         url = f"{self.base_url}/Deals"
@@ -169,6 +220,4 @@ class ZohoCRMService:
                 extra={"deal_id": crm_deal_id, "technician": technician_name},
             )
         finally:
-            # Basic rate limiting to avoid hitting Zoho API limits during large runs.
             time.sleep(0.2)
-
