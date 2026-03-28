@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import time
 from typing import Optional
 
@@ -8,8 +7,6 @@ import requests
 from django.conf import settings
 
 from apps.bookings.models import Booking
-
-logger = logging.getLogger(__name__)
 
 ZOHO_CREATE_DEAL_MINIMAL_STAGE = "Qualification"
 
@@ -41,12 +38,16 @@ class ZohoCRMService:
         client_secret = getattr(settings, "ZOHO_CLIENT_SECRET", None)
 
         if not refresh_token or not client_id or not client_secret:
+            print(
+                "ZOHO ERROR: missing OAuth env (ZOHO_CRM_REFRESH_TOKEN, "
+                "ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET)"
+            )
             raise RuntimeError(
                 "Zoho OAuth requires ZOHO_CRM_REFRESH_TOKEN, ZOHO_CLIENT_ID, and "
                 "ZOHO_CLIENT_SECRET to be set."
             )
 
-        logger.info("Zoho OAuth: requesting access token from %s", token_url)
+        print("Zoho OAuth: requesting access token from", token_url)
         resp = requests.post(
             token_url,
             data={
@@ -59,23 +60,23 @@ class ZohoCRMService:
             timeout=30,
         )
         body = resp.text
-        logger.info(
-            "Zoho OAuth response: status=%s body=%s",
-            resp.status_code,
-            body,
-        )
+        print("Zoho OAuth Status Code:", resp.status_code)
+        print("Zoho OAuth Response:", body)
         if resp.status_code != 200:
+            print("ZOHO ERROR:", body)
             raise RuntimeError(
                 f"Zoho OAuth token refresh failed: status={resp.status_code} body={body}"
             )
         try:
             data = resp.json()
         except ValueError as exc:
+            print("ZOHO ERROR:", body)
             raise RuntimeError(
                 f"Zoho OAuth token refresh: invalid JSON body={body}"
             ) from exc
         access = data.get("access_token")
         if not access:
+            print("ZOHO ERROR:", body)
             raise RuntimeError(
                 f"Zoho OAuth response missing access_token: body={body}"
             )
@@ -87,9 +88,10 @@ class ZohoCRMService:
 
         Raises on any failure so callers and logs surface errors.
         """
-        logger.info("=== ZOHO CREATE DEAL START ===")
+        print(">>> ZOHO CREATE DEAL FUNCTION TRIGGERED <<<")
+        print("=== ZOHO CREATE DEAL START ===")
         self.access_token = self.get_access_token()
-        logger.info("Zoho access token in use: %s", self.access_token)
+        print("Zoho access token in use:", self.access_token)
 
         url = f"{self.base_url}/Deals"
         headers = {
@@ -105,16 +107,17 @@ class ZohoCRMService:
                 }
             ]
         }
-        logger.info("Zoho create deal request URL: %s", url)
-        logger.info("Zoho create deal request payload: %s", payload)
+        print("Zoho create deal request URL:", url)
+        print("Payload:", payload)
 
         resp = requests.post(url, json=payload, headers=headers, timeout=30)
         body = resp.text
-        logger.info("Zoho create deal response status: %s", resp.status_code)
-        logger.info("Zoho create deal response body: %s", body)
+        print("Status Code:", resp.status_code)
+        print("Response:", body)
 
         # Zoho may return 200 or 201 on successful insert
         if not (200 <= resp.status_code < 300):
+            print("ZOHO ERROR:", resp.text)
             raise RuntimeError(
                 f"Zoho create deal failed: status={resp.status_code} body={body}"
             )
@@ -122,17 +125,19 @@ class ZohoCRMService:
         try:
             data = resp.json()
         except ValueError as exc:
+            print("ZOHO ERROR:", body)
             raise RuntimeError(
                 f"Zoho create deal: invalid JSON body={body}"
             ) from exc
         try:
             deal_id = data["data"][0]["details"]["id"]
         except (KeyError, IndexError, TypeError) as exc:
+            print("ZOHO ERROR:", body)
             raise RuntimeError(
                 f"Zoho create deal: could not parse deal id from response: {body}"
             ) from exc
 
-        logger.info("Deal Created Successfully: %s", deal_id)
+        print("Deal Created Successfully:", deal_id)
         return str(deal_id)
 
     def update_deal_assignment(
@@ -153,8 +158,8 @@ class ZohoCRMService:
             return
         try:
             self.access_token = self.get_access_token()
-        except Exception:
-            logger.exception("Zoho CRM: token refresh failed; skipping deal update")
+        except Exception as exc:
+            print("ZOHO ERROR (token refresh; skipping deal update):", exc)
             return
 
         url = f"{self.base_url}/Deals"
@@ -199,25 +204,18 @@ class ZohoCRMService:
 
         try:
             resp = requests.put(url, json=payload, headers=headers, timeout=10)
+            print("Zoho CRM update Status Code:", resp.status_code)
+            print("Zoho CRM update Response:", resp.text)
             if 200 <= resp.status_code < 300:
-                logger.info(
-                    "Zoho CRM updated",
-                    extra={"deal_id": crm_deal_id, "technician": technician_name},
+                print(
+                    "Zoho CRM updated | deal_id=",
+                    crm_deal_id,
+                    "technician=",
+                    technician_name,
                 )
             else:
-                logger.warning(
-                    "Zoho CRM update failed",
-                    extra={
-                        "deal_id": crm_deal_id,
-                        "status": resp.status_code,
-                        "body": resp.text[:500],
-                    },
-                )
+                print("ZOHO ERROR:", resp.text)
         except Exception as exc:
-            logger.error(
-                "Zoho CRM update error",
-                exc_info=exc,
-                extra={"deal_id": crm_deal_id, "technician": technician_name},
-            )
+            print("ZOHO ERROR (CRM update):", exc)
         finally:
             time.sleep(0.2)
