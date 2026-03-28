@@ -8,7 +8,8 @@ from django.conf import settings
 
 from apps.bookings.models import Booking
 
-ZOHO_CREATE_DEAL_MINIMAL_STAGE = "Qualification"
+ZOHO_DEAL_STAGE = "Order Received"
+ZOHO_DEAL_PIPELINE = "Cycleworks.in"
 
 
 class ZohoCRMService:
@@ -82,6 +83,49 @@ class ZohoCRMService:
             )
         return access
 
+    def build_deal_payload(self, booking: Booking) -> dict:
+        """
+        Build Zoho CRM Deal create payload (single record). Omits keys whose
+        values are empty so Zoho does not receive nulls for optional fields.
+        """
+        customer = booking.customer
+        record: dict = {
+            "Deal_Name": f"{customer.name} - {booking.service_date}",
+            "Stage": ZOHO_DEAL_STAGE,
+            "Pipeline": ZOHO_DEAL_PIPELINE,
+        }
+
+        phone = (customer.phone or "").strip()
+        if phone:
+            record["Phone"] = phone
+
+        city = getattr(booking, "city", None)
+        city_name = city.name if city else None
+        if city_name:
+            record["City"] = city_name
+
+        if hasattr(booking.service_date, "strftime"):
+            record["Closing_Date"] = booking.service_date.strftime("%Y-%m-%d")
+        else:
+            record["Closing_Date"] = str(booking.service_date)
+
+        address = (customer.address or "").strip()
+        brand = (customer.cycle_brand or "").strip()
+        model = (customer.cycle_model or "").strip()
+        service_bits = [p for p in (brand, model) if p]
+        service_type = " / ".join(service_bits) if service_bits else "Cycle service"
+        if address:
+            record["Description"] = f"{service_type} at {address}"
+            record["Address"] = address
+        else:
+            record["Description"] = service_type
+
+        amount = getattr(booking, "amount", None)
+        if amount is not None:
+            record["Amount"] = amount
+
+        return {"data": [record]}
+
     def create_deal(self, booking: Booking) -> str:
         """
         Create a Zoho CRM Deal (minimal payload). Refreshes access token first.
@@ -98,15 +142,7 @@ class ZohoCRMService:
             "Authorization": f"Zoho-oauthtoken {self.access_token}",
             "Content-Type": "application/json",
         }
-        # Minimal payload only: Deal_Name + Stage (identify deal via customer + date)
-        payload = {
-            "data": [
-                {
-                    "Deal_Name": f"{booking.customer.name} - {booking.service_date}",
-                    "Stage": ZOHO_CREATE_DEAL_MINIMAL_STAGE,
-                }
-            ]
-        }
+        payload = self.build_deal_payload(booking)
         print("Zoho create deal request URL:", url)
         print("Payload:", payload)
 
