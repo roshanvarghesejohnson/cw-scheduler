@@ -25,6 +25,12 @@ class Customer(models.Model):
     address = models.TextField(
         help_text="Service address in free-text form as provided by the customer.",
     )
+    pincode = models.CharField(
+        max_length=10,
+        blank=True,
+        null=True,
+        help_text="Postal / PIN code for the service location, if provided.",
+    )
     city = models.ForeignKey(
         "cities.City",
         on_delete=models.PROTECT,
