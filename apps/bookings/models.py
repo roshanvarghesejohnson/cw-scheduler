@@ -20,6 +20,12 @@ class Booking(models.Model):
         INTERNAL = "INTERNAL", "Internal"
         AGENCY = "AGENCY", "Agency"
 
+    class ServiceType(models.TextChoices):
+        BASIC = "basic", "Basic"
+        STANDARD = "standard", "Standard"
+        ADVANCED = "advanced", "Advanced"
+        ASSEMBLY = "assembly", "Assembly"
+
     customer = models.ForeignKey(
         "customers.Customer",
         on_delete=models.PROTECT,
@@ -59,6 +65,12 @@ class Booking(models.Model):
     )
     service_date = models.DateField(
         help_text="Target date on which service is planned to occur.",
+    )
+    service_type = models.CharField(
+        max_length=50,
+        choices=ServiceType.choices,
+        default=ServiceType.BASIC,
+        help_text="Service tier selected at booking (e.g. basic, standard).",
     )
     handling_decision = models.CharField(
         max_length=20,

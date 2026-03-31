@@ -23,7 +23,9 @@ from apps.routing.services.geocoding_service import GeocodingService
 from apps.slots.models import Slot
 
 
-REQUIRED_FIELDS = ("slot_id", "phone", "address")
+REQUIRED_FIELDS = ("slot_id", "phone", "address", "service_type")
+
+_VALID_SERVICE_TYPES = {c[0] for c in Booking.ServiceType.choices}
 
 
 class BookingCreateView(APIView):
@@ -63,6 +65,27 @@ class BookingCreateView(APIView):
         if not name:
             return Response(
                 {"success": False, "message": "Missing required field: name"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        service_type_raw = (data.get("service_type") or "").strip()
+        if not service_type_raw:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Missing required field: service_type",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if service_type_raw not in _VALID_SERVICE_TYPES:
+            return Response(
+                {
+                    "success": False,
+                    "message": (
+                        "Invalid service_type. "
+                        "Must be one of: basic, standard, advanced, assembly."
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -136,6 +159,7 @@ class BookingCreateView(APIView):
                 city=city,
                 slot=slot,
                 service_date=service_date,
+                service_type=service_type_raw,
                 status=Booking.Status.REQUESTED,
                 technician=None,
             )

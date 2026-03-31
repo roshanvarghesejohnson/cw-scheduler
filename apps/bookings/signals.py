@@ -3,10 +3,14 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from django.db.models.signals import post_delete, pre_save
+from django.db.models.signals import post_delete, post_save, pre_save
 from django.dispatch import receiver
 
 from apps.bookings.models import Booking
+from apps.integrations.services.zoho_crm_service import (
+    ZOHO_DEAL_STAGE_CUSTOMER_APPROVED,
+    ZohoCRMService,
+)
 from apps.slots.models import Slot
 
 logger = logging.getLogger(__name__)
@@ -92,3 +96,79 @@ def booking_pre_save_update_slot(sender, instance: Booking, **kwargs) -> None:
     if new_slot is not None:
         _adjust_slot_utilization(new_slot, delta=1)
 
+
+@receiver(pre_save, sender=Booking)
+def booking_pre_save_zoho_transition_cache(sender, instance: Booking, **kwargs) -> None:
+    """Cache prior status/technician for post_save Zoho stage sync (admin / save() path)."""
+    if not instance.pk:
+        instance._zoho_prev_status = None  # type: ignore[attr-defined]
+        instance._zoho_prev_technician_id = None  # type: ignore[attr-defined]
+        return
+    try:
+        prev = Booking.objects.only("status", "technician_id").get(pk=instance.pk)
+    except Booking.DoesNotExist:
+        instance._zoho_prev_status = None  # type: ignore[attr-defined]
+        instance._zoho_prev_technician_id = None  # type: ignore[attr-defined]
+        return
+    instance._zoho_prev_status = prev.status  # type: ignore[attr-defined]
+    instance._zoho_prev_technician_id = prev.technician_id  # type: ignore[attr-defined]
+
+
+@receiver(post_save, sender=Booking)
+def booking_post_save_zoho_customer_approved_stage(sender, instance: Booking, **kwargs) -> None:
+    """
+    When a booking becomes CONFIRMED with a technician (non-bulk save path),
+    move Zoho deal to Customer Approved. Skips if already CONFIRMED with same
+    technician (no transition) to avoid duplicate CRM updates.
+    """
+    if kwargs.get("raw"):
+        return
+    if (
+        instance.status != Booking.Status.CONFIRMED
+        or not instance.technician_id
+        or not instance.crm_deal_id
+    ):
+        return
+
+    prev_status = getattr(instance, "_zoho_prev_status", None)
+    prev_tech = getattr(instance, "_zoho_prev_technician_id", None)
+    if (
+        prev_status == Booking.Status.CONFIRMED
+        and prev_tech == instance.technician_id
+    ):
+        return
+
+    b = (
+        Booking.objects.filter(pk=instance.pk)
+        .select_related("technician", "slot", "customer", "city")
+        .first()
+    )
+    if not b or not b.technician_id:
+        return
+
+    print(
+        "Zoho (signal): confirmed+technician booking",
+        b.pk,
+        "deal",
+        b.crm_deal_id,
+        "→ stage",
+        ZOHO_DEAL_STAGE_CUSTOMER_APPROVED,
+    )
+    try:
+        crm = ZohoCRMService()
+        crm.update_deal(
+            b.crm_deal_id,
+            {"Stage": ZOHO_DEAL_STAGE_CUSTOMER_APPROVED},
+        )
+        crm.update_deal_assignment(
+            b.crm_deal_id,
+            b.technician.name,
+            b.service_date,
+            b.slot.start_time if b.slot_id else None,
+            b.slot.end_time if b.slot_id else None,
+            b,
+        )
+    except Exception:
+        logger.exception(
+            "Zoho CRM customer-approved sync failed for booking %s", b.pk
+        )

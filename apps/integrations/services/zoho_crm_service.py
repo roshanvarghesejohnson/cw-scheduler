@@ -10,6 +10,7 @@ from apps.bookings.models import Booking
 
 ZOHO_DEAL_STAGE = "Order Received"
 ZOHO_DEAL_PIPELINE = "Cycleworks.in"
+ZOHO_DEAL_STAGE_CUSTOMER_APPROVED = "Customer Approved"
 
 
 class ZohoCRMService:
@@ -110,15 +111,12 @@ class ZohoCRMService:
             record["Closing_Date"] = str(booking.service_date)
 
         address = (customer.address or "").strip()
-        brand = (customer.cycle_brand or "").strip()
-        model = (customer.cycle_model or "").strip()
-        service_bits = [p for p in (brand, model) if p]
-        service_type = " / ".join(service_bits) if service_bits else "Cycle service"
+        st = getattr(booking, "service_type", None) or "basic"
         if address:
-            record["Description"] = f"{service_type} at {address}"
+            record["Description"] = f"{st} service at {address}"
             record["Address"] = address
         else:
-            record["Description"] = service_type
+            record["Description"] = f"{st} service"
 
         amount = getattr(booking, "amount", None)
         if amount is not None:
@@ -175,6 +173,32 @@ class ZohoCRMService:
 
         print("Deal Created Successfully:", deal_id)
         return str(deal_id)
+
+    def update_deal(self, deal_id: str, fields: dict) -> None:
+        """
+        Generic CRM Deal update by record id (PUT /Deals/{deal_id}).
+        Refreshes OAuth token before the request.
+        """
+        print("Updating Zoho deal:", deal_id)
+        print("Fields:", fields)
+        self.access_token = self.get_access_token()
+        url = f"{self.base_url}/Deals/{deal_id}"
+        record = dict(fields)
+        if "id" not in record:
+            record["id"] = deal_id
+        payload = {"data": [record]}
+        headers = {
+            "Authorization": f"Zoho-oauthtoken {self.access_token}",
+            "Content-Type": "application/json",
+        }
+        resp = requests.put(url, json=payload, headers=headers, timeout=30)
+        print("Status Code:", resp.status_code)
+        print("Response:", resp.text)
+        if not (200 <= resp.status_code < 300):
+            print("ZOHO ERROR:", resp.text)
+            raise RuntimeError(
+                f"Zoho update deal failed: status={resp.status_code} body={resp.text}"
+            )
 
     def update_deal_assignment(
         self,

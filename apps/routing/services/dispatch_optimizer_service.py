@@ -16,7 +16,10 @@ from typing import Dict, List, Optional, Set, Tuple
 from django.db import transaction
 
 from apps.bookings.models import Booking
-from apps.integrations.services.zoho_crm_service import ZohoCRMService
+from apps.integrations.services.zoho_crm_service import (
+    ZOHO_DEAL_STAGE_CUSTOMER_APPROVED,
+    ZohoCRMService,
+)
 from apps.routing.services.distance_service import DistanceService
 from apps.technicians.models import Technician
 
@@ -187,6 +190,18 @@ class DispatchOptimizerService:
                     if not tech:
                         continue
                     try:
+                        print(
+                            "Zoho: confirmed+technician booking",
+                            b.pk,
+                            "deal",
+                            b.crm_deal_id,
+                            "→ stage",
+                            ZOHO_DEAL_STAGE_CUSTOMER_APPROVED,
+                        )
+                        crm_service.update_deal(
+                            b.crm_deal_id,
+                            {"Stage": ZOHO_DEAL_STAGE_CUSTOMER_APPROVED},
+                        )
                         crm_service.update_deal_assignment(
                             b.crm_deal_id,
                             tech.name,

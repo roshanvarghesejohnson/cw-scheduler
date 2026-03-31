@@ -21,6 +21,10 @@ from typing import Dict, List, Set, Tuple
 from django.db import transaction
 
 from apps.bookings.models import Booking
+from apps.integrations.services.zoho_crm_service import (
+    ZOHO_DEAL_STAGE_CUSTOMER_APPROVED,
+    ZohoCRMService,
+)
 from apps.routing.services.distance_service import DistanceService
 from apps.technicians.models import Technician
 
@@ -211,5 +215,39 @@ class TechnicianAssignmentService:
 
         if assigned:
             Booking.objects.bulk_update(assigned, ["technician", "status"])
+            crm_service = ZohoCRMService()
+            for b in assigned:
+                if (
+                    not getattr(b, "crm_deal_id", None)
+                    or not b.technician_id
+                    or b.status != Booking.Status.CONFIRMED
+                ):
+                    continue
+                tech = b.technician
+                print(
+                    "Zoho: confirmed+technician booking",
+                    b.pk,
+                    "deal",
+                    b.crm_deal_id,
+                    "→ stage",
+                    ZOHO_DEAL_STAGE_CUSTOMER_APPROVED,
+                )
+                try:
+                    crm_service.update_deal(
+                        b.crm_deal_id,
+                        {"Stage": ZOHO_DEAL_STAGE_CUSTOMER_APPROVED},
+                    )
+                    crm_service.update_deal_assignment(
+                        b.crm_deal_id,
+                        tech.name,
+                        b.service_date,
+                        b.slot.start_time if b.slot else None,
+                        b.slot.end_time if b.slot else None,
+                        b,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Zoho CRM sync failed for booking %s", b.pk
+                    )
 
         return len(assigned)
