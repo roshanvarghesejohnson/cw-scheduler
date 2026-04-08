@@ -1,6 +1,6 @@
 from django.db import migrations, models
 
-
+# This is a randomn comment to trigger a rebuild for the commit to work
 class Migration(migrations.Migration):
 
     dependencies = [
