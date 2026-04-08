@@ -25,7 +25,7 @@ class Customer(models.Model):
     address = models.TextField(
         help_text="Service address in free-text form as provided by the customer.",
     )
-    pincode = models.CharField(
+    pincode_temp = models.CharField(
         max_length=10,
         blank=True,
         null=True,

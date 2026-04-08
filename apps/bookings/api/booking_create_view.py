@@ -150,15 +150,15 @@ class BookingCreateView(APIView):
                 phone=phone,
                 email=email or None,
                 address=address,
-                pincode=pincode_val,
+                pincode_temp=pincode_val,
                 city=city,
                 cycle_brand=cycle_brand or None,
                 cycle_model=cycle_model or None,
             )
         elif pincode_val is not None:
-            if customer.pincode != pincode_val:
-                customer.pincode = pincode_val
-                customer.save(update_fields=["pincode"])
+            if customer.pincode_temp != pincode_val:
+                customer.pincode_temp = pincode_val
+                customer.save(update_fields=["pincode_temp"])
 
         with transaction.atomic():
             booking = Booking.objects.create(

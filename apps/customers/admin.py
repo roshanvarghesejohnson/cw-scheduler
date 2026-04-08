@@ -5,7 +5,7 @@ from .models import Customer
 
 @admin.register(Customer)
 class CustomerAdmin(admin.ModelAdmin):
-    list_display = ("name", "phone", "city", "email", "pincode", "latitude", "longitude")
+    list_display = ("name", "phone", "city", "email", "pincode_temp", "latitude", "longitude")
     list_filter = ("city",)
     search_fields = ("name", "phone", "email")
     autocomplete_fields = ("city",)
@@ -14,7 +14,7 @@ class CustomerAdmin(admin.ModelAdmin):
         "phone",
         "email",
         "address",
-        "pincode",
+        "pincode_temp",
         "city",
         "latitude",
         "longitude",
