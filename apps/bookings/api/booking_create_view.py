@@ -39,6 +39,9 @@ class BookingCreateView(APIView):
 
     def post(self, request):
         data = request.data if hasattr(request, "data") else {}
+        # TEMP DEBUG — remove after confirming pincode flow
+        print("FULL REQUEST DATA:", data)
+        print("RAW PINCODE FIELD:", data.get("pincode"))
 
         # Support both the original payload shape and the simplified one:
         # - original: name, phone, address, city, slot_id, service_date
@@ -63,6 +66,9 @@ class BookingCreateView(APIView):
         cycle_model = data.get("cycle_model")
         pincode_raw = (data.get("pincode") or "").strip()
         pincode_val = pincode_raw or None
+        # TEMP DEBUG — remove after confirming pincode flow
+        print("PINCODE RAW:", pincode_raw)
+        print("PINCODE FINAL VALUE:", pincode_val)
 
         if not name:
             return Response(
@@ -159,6 +165,9 @@ class BookingCreateView(APIView):
             if customer.pincode_temp != pincode_val:
                 customer.pincode_temp = pincode_val
                 customer.save(update_fields=["pincode_temp"])
+
+        # TEMP DEBUG — remove after confirming pincode flow
+        print("SAVED PINCODE IN DB:", customer.pincode_temp)
 
         with transaction.atomic():
             booking = Booking.objects.create(

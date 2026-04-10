@@ -110,13 +110,17 @@ class ZohoCRMService:
         else:
             record["Closing_Date"] = str(booking.service_date)
 
-        address = (customer.address or "").strip()
+        addr_str = (booking.customer.address or "").strip()
         st = getattr(booking, "service_type", None) or "basic"
-        if address:
-            record["Description"] = f"{st} service at {address}"
-            record["Address"] = address
+        if addr_str:
+            record["Description"] = f"{st} service at {addr_str}"
+            record["Address"] = booking.customer.address
         else:
             record["Description"] = f"{st} service"
+
+        pincode = (booking.customer.pincode_temp or "").strip() or None
+        if pincode:
+            record["Pin_Code"] = pincode
 
         amount = getattr(booking, "amount", None)
         if amount is not None:
@@ -234,28 +238,27 @@ class ZohoCRMService:
         )
 
         city = booking.city.name if getattr(booking, "city", None) else None
-        address = getattr(booking, "address", None)
-        pincode = getattr(booking, "pincode", None)
+        address = booking.customer.address
+        pincode = (booking.customer.pincode_temp or "").strip() or None
         cycle_brand = getattr(booking, "cycle_brand", None)
         cycle_model = getattr(booking, "cycle_model", None)
         service_number = getattr(booking, "id", None)
 
-        payload = {
-            "data": [
-                {
-                    "id": crm_deal_id,
-                    "Service_Technician": technician_name,
-                    "Service_Time": service_time_str,
-                    "Closing_Date": closing_date,
-                    "City": city,
-                    "Address": address,
-                    "Pin_Code": pincode,
-                    "Cycle_Brand": cycle_brand,
-                    "Cycle_Model": cycle_model,
-                    "Service_Number": service_number,
-                }
-            ]
+        row = {
+            "id": crm_deal_id,
+            "Service_Technician": technician_name,
+            "Service_Time": service_time_str,
+            "Closing_Date": closing_date,
+            "City": city,
+            "Address": address,
+            "Cycle_Brand": cycle_brand,
+            "Cycle_Model": cycle_model,
+            "Service_Number": service_number,
         }
+        if pincode:
+            row["Pin_Code"] = pincode
+
+        payload = {"data": [row]}
 
         headers = {
             "Authorization": f"Zoho-oauthtoken {self.access_token}",
