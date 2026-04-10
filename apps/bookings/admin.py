@@ -18,6 +18,8 @@ class BookingAdmin(admin.ModelAdmin):
         "slot",
         "technician",
         "status",
+        "address",
+        "pincode",
         "created_at",
     )
     list_filter = ("status", "service_date", "city")

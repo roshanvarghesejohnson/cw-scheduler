@@ -92,6 +92,8 @@ class Booking(models.Model):
         blank=True,
         help_text="Operations notes, customer constraints, or exception details.",
     )
+    address = models.TextField(blank=True, null=True)
+    pincode = models.CharField(max_length=10, blank=True, null=True)
     crm_deal_id = models.CharField(
         max_length=64,
         null=True,

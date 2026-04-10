@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from typing import Optional
 
@@ -7,6 +8,8 @@ import requests
 from django.conf import settings
 
 from apps.bookings.models import Booking
+
+logger = logging.getLogger(__name__)
 
 ZOHO_DEAL_STAGE = "Order Received"
 ZOHO_DEAL_PIPELINE = "Cycleworks.in"
@@ -40,8 +43,8 @@ class ZohoCRMService:
         client_secret = getattr(settings, "ZOHO_CLIENT_SECRET", None)
 
         if not refresh_token or not client_id or not client_secret:
-            print(
-                "ZOHO ERROR: missing OAuth env (ZOHO_CRM_REFRESH_TOKEN, "
+            logger.error(
+                "Zoho OAuth missing env (ZOHO_CRM_REFRESH_TOKEN, "
                 "ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET)"
             )
             raise RuntimeError(
@@ -49,7 +52,6 @@ class ZohoCRMService:
                 "ZOHO_CLIENT_SECRET to be set."
             )
 
-        print("Zoho OAuth: requesting access token from", token_url)
         resp = requests.post(
             token_url,
             data={
@@ -62,23 +64,21 @@ class ZohoCRMService:
             timeout=30,
         )
         body = resp.text
-        print("Zoho OAuth Status Code:", resp.status_code)
-        print("Zoho OAuth Response:", body)
         if resp.status_code != 200:
-            print("ZOHO ERROR:", body)
+            logger.error("Zoho OAuth token refresh failed: status=%s body=%s", resp.status_code, body)
             raise RuntimeError(
                 f"Zoho OAuth token refresh failed: status={resp.status_code} body={body}"
             )
         try:
             data = resp.json()
         except ValueError as exc:
-            print("ZOHO ERROR:", body)
+            logger.error("Zoho OAuth invalid JSON: body=%s", body)
             raise RuntimeError(
                 f"Zoho OAuth token refresh: invalid JSON body={body}"
             ) from exc
         access = data.get("access_token")
         if not access:
-            print("ZOHO ERROR:", body)
+            logger.error("Zoho OAuth response missing access_token: body=%s", body)
             raise RuntimeError(
                 f"Zoho OAuth response missing access_token: body={body}"
             )
@@ -100,31 +100,25 @@ class ZohoCRMService:
         if phone:
             record["Phone"] = phone
 
-        city = getattr(booking, "city", None)
-        city_name = city.name if city else None
-        if city_name:
-            record["City"] = city_name
+        city = booking.city
+        if city:
+            record["City"] = city.name
 
         if hasattr(booking.service_date, "strftime"):
             record["Closing_Date"] = booking.service_date.strftime("%Y-%m-%d")
         else:
             record["Closing_Date"] = str(booking.service_date)
 
-        addr_str = (booking.customer.address or "").strip()
-        st = getattr(booking, "service_type", None) or "basic"
-        if addr_str:
-            record["Description"] = f"{st} service at {addr_str}"
-            record["Address"] = booking.customer.address
-        else:
-            record["Description"] = f"{st} service"
+        service_type = booking.service_type or "basic"
+        address = booking.address or customer.address
+        pincode = booking.pincode or customer.pincode_temp
 
-        pincode = (booking.customer.pincode_temp or "").strip() or None
+        if address:
+            record["Address"] = address
+            record["Description"] = f"{service_type} service at {address}"
+
         if pincode:
             record["Pin_Code"] = pincode
-
-        amount = getattr(booking, "amount", None)
-        if amount is not None:
-            record["Amount"] = amount
 
         return {"data": [record]}
 
@@ -134,10 +128,7 @@ class ZohoCRMService:
 
         Raises on any failure so callers and logs surface errors.
         """
-        print(">>> ZOHO CREATE DEAL FUNCTION TRIGGERED <<<")
-        print("=== ZOHO CREATE DEAL START ===")
         self.access_token = self.get_access_token()
-        print("Zoho access token in use:", self.access_token)
 
         url = f"{self.base_url}/Deals"
         headers = {
@@ -145,17 +136,12 @@ class ZohoCRMService:
             "Content-Type": "application/json",
         }
         payload = self.build_deal_payload(booking)
-        print("Zoho create deal request URL:", url)
-        print("Payload:", payload)
 
         resp = requests.post(url, json=payload, headers=headers, timeout=30)
         body = resp.text
-        print("Status Code:", resp.status_code)
-        print("Response:", body)
 
-        # Zoho may return 200 or 201 on successful insert
         if not (200 <= resp.status_code < 300):
-            print("ZOHO ERROR:", resp.text)
+            logger.error("Zoho create deal failed: status=%s body=%s", resp.status_code, body)
             raise RuntimeError(
                 f"Zoho create deal failed: status={resp.status_code} body={body}"
             )
@@ -163,19 +149,18 @@ class ZohoCRMService:
         try:
             data = resp.json()
         except ValueError as exc:
-            print("ZOHO ERROR:", body)
+            logger.error("Zoho create deal invalid JSON: body=%s", body)
             raise RuntimeError(
                 f"Zoho create deal: invalid JSON body={body}"
             ) from exc
         try:
             deal_id = data["data"][0]["details"]["id"]
         except (KeyError, IndexError, TypeError) as exc:
-            print("ZOHO ERROR:", body)
+            logger.error("Zoho create deal could not parse deal id: body=%s", body)
             raise RuntimeError(
                 f"Zoho create deal: could not parse deal id from response: {body}"
             ) from exc
 
-        print("Deal Created Successfully:", deal_id)
         return str(deal_id)
 
     def update_deal(self, deal_id: str, fields: dict) -> None:
@@ -183,8 +168,6 @@ class ZohoCRMService:
         Generic CRM Deal update by record id (PUT /Deals/{deal_id}).
         Refreshes OAuth token before the request.
         """
-        print("Updating Zoho deal:", deal_id)
-        print("Fields:", fields)
         self.access_token = self.get_access_token()
         url = f"{self.base_url}/Deals/{deal_id}"
         record = dict(fields)
@@ -196,10 +179,13 @@ class ZohoCRMService:
             "Content-Type": "application/json",
         }
         resp = requests.put(url, json=payload, headers=headers, timeout=30)
-        print("Status Code:", resp.status_code)
-        print("Response:", resp.text)
         if not (200 <= resp.status_code < 300):
-            print("ZOHO ERROR:", resp.text)
+            logger.error(
+                "Zoho update deal failed: deal_id=%s status=%s body=%s",
+                deal_id,
+                resp.status_code,
+                resp.text,
+            )
             raise RuntimeError(
                 f"Zoho update deal failed: status={resp.status_code} body={resp.text}"
             )
@@ -223,7 +209,7 @@ class ZohoCRMService:
         try:
             self.access_token = self.get_access_token()
         except Exception as exc:
-            print("ZOHO ERROR (token refresh; skipping deal update):", exc)
+            logger.warning("Zoho token refresh failed; skipping deal update: %s", exc)
             return
 
         url = f"{self.base_url}/Deals"
@@ -237,12 +223,10 @@ class ZohoCRMService:
             else str(service_date)
         )
 
-        city = booking.city.name if getattr(booking, "city", None) else None
-        address = booking.customer.address
-        pincode = (booking.customer.pincode_temp or "").strip() or None
-        cycle_brand = getattr(booking, "cycle_brand", None)
-        cycle_model = getattr(booking, "cycle_model", None)
-        service_number = getattr(booking, "id", None)
+        customer = booking.customer
+        city = booking.city.name if booking.city else None
+        address = booking.address or customer.address
+        pincode = booking.pincode or customer.pincode_temp
 
         row = {
             "id": crm_deal_id,
@@ -250,11 +234,12 @@ class ZohoCRMService:
             "Service_Time": service_time_str,
             "Closing_Date": closing_date,
             "City": city,
-            "Address": address,
-            "Cycle_Brand": cycle_brand,
-            "Cycle_Model": cycle_model,
-            "Service_Number": service_number,
+            "Cycle_Brand": customer.cycle_brand,
+            "Cycle_Model": customer.cycle_model,
+            "Service_Number": booking.id,
         }
+        if address:
+            row["Address"] = address
         if pincode:
             row["Pin_Code"] = pincode
 
@@ -267,18 +252,13 @@ class ZohoCRMService:
 
         try:
             resp = requests.put(url, json=payload, headers=headers, timeout=10)
-            print("Zoho CRM update Status Code:", resp.status_code)
-            print("Zoho CRM update Response:", resp.text)
-            if 200 <= resp.status_code < 300:
-                print(
-                    "Zoho CRM updated | deal_id=",
-                    crm_deal_id,
-                    "technician=",
-                    technician_name,
+            if not (200 <= resp.status_code < 300):
+                logger.warning(
+                    "Zoho CRM update failed: status=%s body=%s",
+                    resp.status_code,
+                    resp.text,
                 )
-            else:
-                print("ZOHO ERROR:", resp.text)
         except Exception as exc:
-            print("ZOHO ERROR (CRM update):", exc)
+            logger.warning("Zoho CRM update failed: %s", exc)
         finally:
             time.sleep(0.2)
